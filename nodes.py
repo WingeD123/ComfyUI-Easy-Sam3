@@ -522,6 +522,10 @@ class Sam3VideoSegmentation(io.ComfyNode):
                 io.Custom(io_type="EASY_SAM3_OBJECTS_OUTPUT").Output(
                     "objects",
                     display_name="objects"
+                ),
+                io.Mask.Output(
+                    "obj_masks",
+                    display_name="obj_masks"
                 )
             ]
         )
@@ -649,6 +653,8 @@ class Sam3VideoSegmentation(io.ComfyNode):
                 "obj_ids":None,
                 "obj_masks":None
             }
+            object_masks = []
+
             for response in video_predictor.handle_stream_request(
                 request=dict(
                     type="propagate_in_video",
@@ -668,9 +674,17 @@ class Sam3VideoSegmentation(io.ComfyNode):
                         mask = outputs["out_binary_masks"]
                         object_outputs["obj_masks"] = mask
                         if mask.shape[0] > 0:
+                            # Convert mask to tensor and append to object_masks list
+                            mask_tensor = torch.from_numpy(mask).float()
+                            object_masks.append(mask_tensor)
+                            
                             merged_mask = np.any(mask, axis=0).astype(np.float32)
                             frame_masks = torch.from_numpy(merged_mask)
                             output_masks[frame_idx] = frame_masks
+                        else:
+                            object_masks.append(torch.zeros((1, H, W)))
+                    else:
+                        object_masks.append(torch.zeros((1, H, W)))
 
                 # Update progress bar
                 processed_frames += 1
@@ -690,7 +704,9 @@ class Sam3VideoSegmentation(io.ComfyNode):
                     )
                 )
 
-        return io.NodeOutput(output_masks, session_id, object_outputs)
+        object_masks = torch.stack(object_masks, dim=0)
+
+        return io.NodeOutput(output_masks, session_id, object_outputs, object_masks)
 
 
 class Sam3VideoModelExtraConfig(io.ComfyNode):
