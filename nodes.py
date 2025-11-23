@@ -704,7 +704,27 @@ class Sam3VideoSegmentation(io.ComfyNode):
                     )
                 )
 
-        object_masks = torch.stack(object_masks, dim=0)
+        # Pad object_masks to have the same number of objects across all frames
+        if len(object_masks) > 0:
+            # Find the maximum number of objects across all frames
+            max_num_objects = max(mask.shape[0] for mask in object_masks)
+            
+            # Pad each frame's masks to have max_num_objects
+            padded_masks = []
+            for mask in object_masks:
+                num_objects = mask.shape[0]
+                if num_objects < max_num_objects:
+                    # Pad with zero masks
+                    padding = torch.zeros((max_num_objects - num_objects, H, W))
+                    padded_mask = torch.cat([mask, padding], dim=0)
+                    padded_masks.append(padded_mask)
+                else:
+                    padded_masks.append(mask)
+            
+            object_masks = torch.stack(padded_masks, dim=0)
+        else:
+            # No masks detected, create empty tensor
+            object_masks = torch.zeros((B, 1, H, W))
 
         return io.NodeOutput(output_masks, session_id, object_outputs, object_masks)
 
