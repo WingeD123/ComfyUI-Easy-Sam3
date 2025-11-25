@@ -114,11 +114,6 @@ class LoadSam3Model(io.ComfyNode):
         if precision != 'fp32' and device == 'cpu':
             raise ValueError("fp16 and bf16 are not supported on cpu")
 
-        if device == "cuda":
-            if torch.cuda.get_device_properties(0).major >= 8:
-                # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
         device = {"cuda": torch.device("cuda"), "cpu": torch.device("cpu"), "mps": torch.device("mps")}[device]
 
@@ -211,7 +206,6 @@ class Sam3ImageSegmentation(io.ComfyNode):
                 io.Mask.Output(
                     "output_masks",
                     display_name="masks",
-                    # is_output_list=True,
                     tooltip="Segmentation masks (combined per image)"
                 ),
                 io.Image.Output(
@@ -251,6 +245,9 @@ class Sam3ImageSegmentation(io.ComfyNode):
 
         if model is None or segmentor != "image":
             raise ValueError("Invalid SAM3 model. Please load a SAM3 model in 'image' mode")
+
+        if prompt.strip() == "" and coordinates_positive is None and coordinates_negative is None and bboxes is None and mask is None:
+            raise ValueError("At least one prompt (text, points, boxes, or mask) must be provided for segmentation")
 
         # set confidence threshold
         processor.set_confidence_threshold(threshold)
@@ -300,7 +297,6 @@ class Sam3ImageSegmentation(io.ComfyNode):
             output_raw_masks = []
 
             # Initialize progress bar
-
             pbar = comfy.utils.ProgressBar(num_frames)
             processed_frames = 0
 
@@ -632,7 +628,7 @@ class Sam3VideoSegmentation(io.ComfyNode):
                 points = neg_points
                 point_labels = [0] * neg_count
 
-            # bbox (has bugs)
+            # bbox
             bounding_boxes = None
             bounding_box_labels = None
             if bbox is not None:
@@ -998,13 +994,14 @@ class Sam3Visualization(io.ComfyNode):
         
         Args:
             image: Input images tensor [B, H, W, C]
-            boxes: List of bounding box tensors, one per image [N, 4] in [x0, y0, x1, y1] format
-            scores: List of score tensors, one per image [N]
-            masks: Optional list of mask tensors, one per image [N, H, W]
-            alpha: Transparency for mask overlay
+            obj_masks: Object masks tensor [B, N, H, W] where N is number of objects per image
+            alpha: Transparency for mask overlay (0.0-1.0)
+            stroke_width: Width of the mask border stroke in pixels
+            font_size: Font size for confidence score text
+            scores: Optional confidence scores for each object
             
         Returns:
-            Visualized images with masks, boxes and scores overlaid
+            Visualized images with masks and scores overlaid
         """
         B = image.shape[0]
 
@@ -1018,7 +1015,7 @@ class Sam3Visualization(io.ComfyNode):
             pil_image = pil_images[idx]
             raw_masks = obj_masks[idx] if obj_masks is not None else None
             # Create visualization
-            # Note: If masks are None, visualize_masks_on_image will still draw boxes and scores
+            # If scores are None, `draw_visualize_image` funciton will still draw masks
             vis_image = draw_visualize_image(
                 pil_image,
                 raw_masks,
