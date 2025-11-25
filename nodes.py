@@ -746,12 +746,7 @@ class Sam3VideoSegmentation(io.ComfyNode):
 
                 # Update progress bar
                 processed_frames += 1
-                pbar.update_absolute(processed_frames, B)
-
-            # Switch model back to offload device
-            if not keep_model_loaded:
-                video_predictor.model.to(offload_device)
-                mm.soft_empty_cache()
+                pbar.update_absolute(processed_frames, B)           
 
             # close session
             if close_after_propagation:
@@ -761,6 +756,15 @@ class Sam3VideoSegmentation(io.ComfyNode):
                         session_id=session_id,
                     )
                 )
+            
+            # Switch model back to offload device
+            if not keep_model_loaded:
+                video_predictor.model.to(offload_device)
+                mm.soft_empty_cache()
+
+            # When closing the session and unloading the video memory, the predictor will shut down.
+            if not keep_model_loaded and close_after_propagation:
+                video_predictor.shutdown()
 
         # Pad object_masks to have the same number of objects across all frames
         if len(object_masks) > 0:
