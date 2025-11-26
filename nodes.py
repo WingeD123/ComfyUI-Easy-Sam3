@@ -734,8 +734,8 @@ class Sam3VideoSegmentation(io.ComfyNode):
                     if "out_binary_masks" in outputs:
                         mask = outputs["out_binary_masks"]
                         # Store mask for this frame
-                        obj_masks_by_frame[frame_idx] = mask
                         if mask.shape[0] > 0:
+                            obj_masks_by_frame[frame_idx] = mask
                             # Convert mask to tensor and store by frame_idx
                             mask_tensor = torch.from_numpy(mask).float()
                             object_masks_dict[frame_idx] = mask_tensor
@@ -772,42 +772,47 @@ class Sam3VideoSegmentation(io.ComfyNode):
 
         # Convert obj_masks_by_frame to ordered list matching frame indices
         if len(obj_masks_by_frame) > 0:
+            # Find maximum number of objects across all processed frames
+            max_num_objects = max(mask.shape[0] for mask in obj_masks_by_frame.values())
+            
             # Create ordered list of obj_masks by frame index
             ordered_obj_masks = []
             for frame_idx in range(B):
                 if frame_idx in obj_masks_by_frame:
-                    ordered_obj_masks.append(obj_masks_by_frame[frame_idx])
+                    mask = obj_masks_by_frame[frame_idx]
+                    # Pad if needed to match max_num_objects
+                    if mask.shape[0] < max_num_objects:
+                        padding = np.zeros((max_num_objects - mask.shape[0], H, W), dtype=np.float32)
+                        mask = np.concatenate([mask, padding], axis=0)
+                    ordered_obj_masks.append(mask)
                 else:
-                    # Frame not processed, add empty mask array
-                    ordered_obj_masks.append(np.zeros((1, H, W), dtype=np.float32))
+                    # Frame not processed, add empty mask array with correct shape
+                    ordered_obj_masks.append(np.zeros((max_num_objects, H, W), dtype=np.float32))
             object_outputs["obj_masks"] = ordered_obj_masks
         
         # Convert object_masks_dict to ordered list and pad to have same number of objects across all frames
         if len(object_masks_dict) > 0:
-            # Create ordered list of masks by frame index
-            object_masks = []
+            # Find the maximum number of objects across all frames
+            max_num_objects = max(mask.shape[0] for mask in object_masks_dict.values())
+            
+            # Create ordered list of masks by frame index, ensuring all B frames are included
+            padded_masks = []
             for frame_idx in range(B):
                 if frame_idx in object_masks_dict:
-                    object_masks.append(object_masks_dict[frame_idx])
+                    mask = object_masks_dict[frame_idx]
+                    num_objects = mask.shape[0]
+                    if num_objects < max_num_objects:
+                        # Pad with zero masks
+                        padding = torch.zeros((max_num_objects - num_objects, H, W))
+                        padded_mask = torch.cat([mask, padding], dim=0)
+                        padded_masks.append(padded_mask)
+                    else:
+                        padded_masks.append(mask)
                 else:
-                    # Frame not processed, add empty mask
-                    object_masks.append(torch.zeros((1, H, W)))
+                    # Frame not processed, add empty mask with correct shape
+                    padded_masks.append(torch.zeros((max_num_objects, H, W)))
             
-            # Find the maximum number of objects across all frames
-            max_num_objects = max(mask.shape[0] for mask in object_masks)
-            
-            # Pad each frame's masks to have max_num_objects
-            padded_masks = []
-            for mask in object_masks:
-                num_objects = mask.shape[0]
-                if num_objects < max_num_objects:
-                    # Pad with zero masks
-                    padding = torch.zeros((max_num_objects - num_objects, H, W))
-                    padded_mask = torch.cat([mask, padding], dim=0)
-                    padded_masks.append(padded_mask)
-                else:
-                    padded_masks.append(mask)
-            
+            # Now stack all B frames
             object_masks = torch.stack(padded_masks, dim=0)
         else:
             # No masks detected, create empty tensor
